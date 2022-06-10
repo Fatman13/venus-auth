@@ -1,0 +1,93 @@
+name: build for test/release
+
+on:
+  push:
+    branches:
+      - feat/tanlang/docker_dev
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: 'true'
+          fetch-depth: '0'
+
+      - name: vars
+        id: vars
+        run: |
+          export bin=bin
+          export commit=$(git rev-parse HEAD)
+          export short=$(git rev-parse --short HEAD)
+          export github_tag=${{github.ref_name}}
+          export git_message=$(git rev-list --format=%s --max-count=1 HEAD | tail +2)
+          export repo_name=${GITHUB_REPOSITORY##*/}
+          export branch=$(git symbolic-ref --short -q HEAD)
+          export tag=$(git describe --tags $(git rev-list --tags --max-count=1))
+          export artifact_name=${repo_name}_$(git rev-parse --short HEAD).tar.gz
+          export pub_method=pushTest
+          export job_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          export oss_exists=0
+          export ftp_exists=0
+          export rx='^v([0-9]+\.){0,2}(\*|[0-9]+)(-rc[0-9]*){0,1}$'
+          if [[ "${{github.ref_type}}" == "tag" ]] && [[ "${{github.event_name}}" == "create" ]] && [[ "$github_tag" =~ $rx ]]; then
+            export pub_method=pushRelease
+          fi
+          if [[ "$branch" == "" ]]; then
+            export branch=$github_tag
+          fi
+          if [[ "$tag" == "" ]]; then
+            export tag=$github_tag
+          fi
+          if [[ "${{secrets.OSS_KEY_ID}}" != "" && \
+            "${{secrets.OSS_KEY_SECRET}}" != "" && \
+            "${{secrets.OSS_ENDPOINT}}" != "" && \
+            "${{secrets.OSS_BUCKET}}" != "" ]]; then
+            export oss_exists=1
+          fi
+          if [[ "${{secrets.FTP_HOST}}" != "" ]]; then
+            export ftp_exists=1
+          fi
+          echo "::set-output name=bin::$bin"
+          echo "::set-output name=commit::$commit"
+          echo "::set-output name=short::$short"
+          echo "::set-output name=github_tag::$github_tag"
+          echo "::set-output name=git_message::$git_message"
+          echo "::set-output name=repo_name::$repo_name"
+          echo "::set-output name=branch::$branch"
+          echo "::set-output name=tag::$tag"
+          echo "::set-output name=artifact_name::$artifact_name"
+          echo "::set-output name=job_url::$job_url"
+          echo "::set-output name=pub_method::$pub_method"
+          echo "::set-output name=oss_exists::$oss_exists"
+          echo "::set-output name=ftp_exists::$ftp_exists"
+
+      - name: show environment
+        run: |
+          echo bin = ${{github.bin}}
+          echo event = ${{github.event_name}}
+          echo github_repository: $GITHUB_REPOSITORY
+          echo vars.commit = ${{steps.vars.outputs.commit}}
+          echo vars.short_commit = ${{steps.vars.outputs.short}}
+          echo vars.github_tag = ${{steps.vars.outputs.github_tag}}
+          echo vars.git_message = "${{steps.vars.outputs.git_message}}"
+          echo vars.repo_name =  ${{steps.vars.outputs.repo_name}}
+          echo vars.branch = ${{steps.vars.outputs.branch}}
+          echo vars.tag = ${{steps.vars.outputs.tag}}
+          echo vars.artifact_name = ${{steps.vars.outputs.artifact_name}}
+          echo vars.pub_method = ${{steps.vars.outputs.pub_method}}
+          echo secrets.godeye_url = ${{ secrets.GODEYE_URL }}
+          echo vars.oss_exists = ${{steps.vars.outputs.oss_exists}}
+          echo vars.ftp_exists = ${{steps.vars.outputs.ftp_exists}}
+          echo github.ref = ${{github.ref}}
+          echo github.ref_name = ${{github.ref_name}}
+          echo vars.job_url = ${{steps.vars.outputs.job_url}}
+          echo ftp_url = ftp://${{secrets.FTP_HOST}}/${{steps.vars.outputs.repo_name}}/${{steps.vars.outputs.artifact_name}}
+
+      - name: Publish the Docker image 
+        run: |
+          docker build . --file dockerfile --tag filvenus/venus-auth:latest
+          docker login --username=filvenus --password ${{ secrets.DOCKER_PASSWORD }} 
+          docker push filvenus/venus-auth:latest
